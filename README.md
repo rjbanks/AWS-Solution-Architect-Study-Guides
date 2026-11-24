@@ -4,3 +4,5 @@ A lightweight, independent reference library for the AWS Solutions Architect Ass
 ## Scope
 
 Study notes, not an exhaustive exam course or official AWS materials. Architecture flows are schematic. Exam priorities are editorial, not guaranteed exam coverage. AWS services evolve; follow the official documentation links in each guide.
+
+viewable https://rjbanks.github.io/AWS-Solution-Architect-Study-Guides/
