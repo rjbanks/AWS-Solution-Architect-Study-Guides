@@ -1,0 +1,273 @@
+#route53|Route 53|Networking|DNS answers, not application traffic.|https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/Welcome.html
+FLOW|Client DNS query>Route 53 hosted zone>DNS answer>Client connects to ALB
+ROW|A / AAAA|IPv4 / IPv6 address|IP address mapping
+ROW|Alias|Supported AWS targets or compatible records in same zone; apex allowed|Root domain → ALB or CloudFront
+ROW|CNAME|Hostname to hostname; not at zone apex|www → external vendor
+ROW|Simple|Basic DNS response; multiple values possible|Single application
+ROW|Weighted|Relative weights 0–255; DNS probabilities, not exact request percentages|Canary / A/B
+ROW|Failover|Primary and secondary with health evaluation|Active-passive DR
+ROW|Latency|Region expected to deliver lowest network latency|Best network performance
+ROW|Geolocation|Client geography; configure default record|Country or language
+ROW|Geoproximity|Geographic distance; positive bias expands catchment|Bias
+ROW|Multivalue|Up to 8 healthy records when checks configured|Several healthy IPs
+ROW|IP-based|Source CIDR matching|Known IP ranges
+ROW|Hosted zones|Public internet vs private associated VPCs; private needs DNS support and hostnames enabled|Internal DNS
+ROW|Resolver|Inbound = on-prem to AWS DNS; outbound + rule = AWS to on-prem DNS|Hybrid resolution
+ROW|Health|HTTP/HTTPS/TCP; calculated or CloudWatch alarm; Alias Evaluate Target Health for ELB|DNS failover
+ROW|TTL|Lower TTL before migration; cached answers may persist|Faster DNS changes
+ROW|DNSSEC / DNS Firewall|Authenticity, not encryption / filter VPC DNS queries|Integrity / malicious domains
+TRAP|Alias does not directly target arbitrary EC2 hostnames. CNAME cannot be used at the zone apex. A private zone that matches but lacks a record does not simply fall back to public DNS.
+TRAP|DNS failover is not instantaneous. Route 53 does not proxy requests. Traditional public health checkers cannot reach private IPs; alarm-based checks are the classic exam solution. Newer private endpoint health checks use a VPC health check source.
+TRAP|Newer AZ-affinity routing prefers the query's AZ with broader location fallback; lower priority for classic SAA preparation. Do not confuse latency with geography.
+Q|Root domain must point at an ALB.|CNAME|Alias A|MX|PTR|1|Alias supports the apex and tracks the ELB DNS target.
+Q|On-prem servers must resolve AWS private DNS.|Outbound endpoint|NAT gateway|Inbound Resolver endpoint|Public hosted zone|2|Queries enter AWS via an inbound endpoint over private connectivity.
+Q|Route 5% of DNS selections to a canary.|Geolocation|Failover|Simple|Weighted|3|Weights 95 and 5 give approximate DNS selection probabilities.
+Q|The fastest AWS Region is required.|Latency|Geolocation|Geoproximity|Multivalue|0|Latency routing uses expected network latency, not distance alone.
+Q|Users still connect to a failed primary after DNS failover.|IAM|Cached DNS answers|S3 versioning|NACL rule|1|Existing cached answers may persist until TTL expiration.
+#vpc|VPC networking|Networking|A working connection needs a route, permission, and return path.|https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html
+FLOW|Internet>Internet gateway>Public subnet / ALB>Private subnet / app>Database subnet
+ROW|VPC / subnet|VPC spans AZs in one Region; subnet belongs to one AZ|Isolation / multi-AZ
+ROW|Public subnet|Route to IGW; instance also needs public IP and permissions for direct IPv4 internet|Internet-facing
+ROW|Private subnet|No direct route to IGW; public NAT gateway for outbound IPv4 internet|No unsolicited inbound
+ROW|NAT gateway|Public NAT in public subnet, Elastic IP, IGW route; private subnet routes to NAT|Outbound patching
+ROW|Gateway endpoint|S3 and DynamoDB; route table target; no endpoint hourly charge|Private service access
+ROW|Interface endpoint|PrivateLink ENIs, private IPs, security groups, optional private DNS|Private AWS API access
+ROW|Egress-only IGW|Outbound IPv6 internet; prevents unsolicited inbound|IPv6 private egress
+ROW|Route tables|Longest prefix match; local VPC route; subnet association|Destination CIDR
+ROW|Elastic IP|Static public IPv4 address; remappable within Region|Stable IP
+TRAP|Public subnet alone does not give an instance internet access. NAT gateway is not a firewall, and an IGW handles public IPv4 translation for an instance with a public IPv4 address.
+TRAP|Deploy a NAT gateway per AZ and route locally for resilient public NAT egress. A gateway endpoint is not PrivateLink and is not a general internet route.
+Q|Private EC2 needs S3 access with no internet or NAT.|IGW|S3 gateway endpoint|Public IP|VPN|1|Gateway endpoints privately route S3 traffic without NAT.
+Q|Private IPv6 workloads need outbound-only internet.|Egress-only IGW|NAT instance|VPC peering|Internet-facing ALB|0|Egress-only IGW provides outbound IPv6 connectivity.
+Q|A public EC2 with an IGW route cannot reach internet; SG allows egress.|Add Transit Gateway|Add public IPv4 address|Add SQS|Add EFS|1|Direct IPv4 internet access also requires a public IPv4 address and a permitted path.
+#netsecurity|Network security|Networking|Security groups protect ENIs; NACLs protect subnet boundaries.|https://docs.aws.amazon.com/vpc/latest/userguide/vpc-security.html
+FLOW|Internet>Subnet NACL>ALB security group>App security group>Database security group
+ROW|Security group|Stateful; allow rules only; return traffic automatically permitted|Instance / ENI firewall
+ROW|Network ACL|Stateless; allow and deny; numbered rules evaluated lowest first|Subnet firewall
+ROW|Ephemeral ports|NACL must permit relevant response traffic in opposite direction|Return path
+ROW|SG references|Allow source app SG to database SG on required port|Tier isolation
+ROW|Default NACL|Allows inbound and outbound by default|Default subnet ACL
+ROW|Custom NACL|Denies until rules explicitly allow traffic|Explicit rules
+ROW|VPC Flow Logs|IP traffic metadata, ACCEPT/REJECT, not packet payload|Investigate network access
+ROW|Reachability Analyzer|Analyzes configured network path; not a live packet probe|Find blocking component
+TRAP|An explicit deny is possible in NACLs, not security groups. Security groups are stateful even if inbound and outbound rules differ.
+TRAP|Do not use broad CIDR access when security group references meet the requirement. Flow Logs do not capture application payloads.
+Q|Only app instances should access RDS on 3306.|Open 3306 to internet|Reference app SG in DB SG|Use Route 53|Use KMS|1|SG reference restricts source to resources associated with that group.
+Q|Block a known malicious IP at subnet level.|SG deny|NACL deny rule before allow|IAM role|S3 policy|1|NACL supports explicit deny and first matching rule wins.
+Q|Return traffic blocked despite outbound NACL allowing connection.|Add inbound ephemeral return rule|Disable TLS|Change DNS|Use EBS|0|NACLs are stateless; both traffic directions need matching rules.
+#hybrid|Hybrid networking|Networking|Choose connectivity by topology, bandwidth, encryption and routing.|https://docs.aws.amazon.com/vpc/latest/tgw/what-is-transit-gateway.html
+FLOW|On-premises>VPN or Direct Connect>Transit Gateway>VPC A / VPC B / VPC C
+ROW|VPC peering|Direct private connectivity; non-transitive; no overlapping CIDRs|Two VPCs
+ROW|Transit Gateway|Regional hub-and-spoke; transitive routing with route tables; inter-Region peering available|Many VPCs
+ROW|Site-to-Site VPN|Encrypted IPsec over internet; two tunnels per connection|Quick hybrid setup
+ROW|Direct Connect|Dedicated private connectivity; not encrypted by default|Consistent bandwidth
+ROW|DX + VPN / MACsec|VPN over DX for IPsec or eligible MACsec links for link encryption|Dedicated plus encryption
+ROW|ECMP with TGW|Equal-cost BGP paths can distribute flows across eligible VPN tunnels|Aggregate throughput
+ROW|PrivateLink|Expose a service privately without full network connectivity; can work across overlapping CIDRs|Consumer/provider access
+ROW|Client VPN|Remote individual users connect securely|Remote staff
+TRAP|Peering cannot route through another peered VPC. Direct Connect is not automatically encrypted. Multiple tunnels cannot exceed underlying link capacity or guarantee faster single flows.
+TRAP|Transit Gateway needs attachment routes, association and propagation as appropriate. PrivateLink is service access, not full network peering.
+Q|Connect 30 VPCs and on-prem with centralized routing.|Full mesh peering|Transit Gateway|CloudFront|NACL|1|TGW provides a central routing hub.
+Q|Share one service with a customer using overlapping CIDRs.|Peering|IGW|PrivateLink|NAT only|2|PrivateLink exposes service endpoints without routing entire networks.
+Q|Dedicated connection requires IPsec encryption.|Direct Connect alone|VPN over Direct Connect|Public ALB|Route 53|1|DX alone does not encrypt traffic; IPsec VPN supplies encryption.
+#ec2|EC2 essentials|Compute|Match workload requirements to instance, placement and purchasing model.|https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/concepts.html
+FLOW|AMI + launch template>EC2 instance>Instance role>EBS / external services
+ROW|General / compute / memory|Balanced / CPU-intensive / RAM-heavy families|Choose bottleneck
+ROW|Storage optimized / accelerated|Local I/O / GPUs or accelerators|High local IOPS / ML
+ROW|On-Demand|No commitment; predictable short workloads|Uncertain demand
+ROW|Spot|Unused capacity at variable discount; interruptible|Fault-tolerant batch
+ROW|Savings Plans / Reserved Instances|Commitment discounts; capacity reservation is separate except qualifying zonal RI|Steady workload
+ROW|Dedicated Host|Physical host visibility; socket/core licensing|BYOL / compliance
+ROW|Placement groups|Cluster low latency; spread isolated hardware; partition separates groups|HPC / failure isolation
+ROW|Instance store|Ephemeral local disk; data lost on stop/termination|Scratch data
+ROW|Launch template / AMI|Configuration blueprint / machine image|Repeatable launches
+ROW|User data / instance role|Bootstrap / temporary AWS credentials|Automation / least privilege
+TRAP|Spot is unsuitable for non-interruptible workloads without a fallback. Savings Plans do not reserve capacity. EBS persistence depends on volume deletion settings.
+TRAP|Instance role is preferred over access keys stored on instances. Cluster placement prioritizes performance, not cross-AZ resilience.
+Q|Stateless batch job tolerates interruptions.|Dedicated Host|Spot|Zonal RI|Mac instance|1|Spot reduces cost for interruption-tolerant jobs.
+Q|Tightly coupled HPC nodes need low latency.|Spread|Partition|Cluster placement group|Multi-Region|2|Cluster placement groups favor close network proximity.
+Q|Software licensing requires visibility of physical sockets.|Dedicated Host|Spot|Shared tenancy|Lambda|0|Dedicated Hosts provide physical host visibility.
+#elb|ELB & Auto Scaling|Compute|Load balancers distribute requests; Auto Scaling maintains capacity.|https://docs.aws.amazon.com/elasticloadbalancing/latest/userguide/what-is-load-balancing.html
+FLOW|Clients>ALB / NLB>Target group>EC2 instances across AZs
+ROW|ALB|Layer 7 HTTP/HTTPS; host/path/header routing; targets include Lambda|Microservices / web
+ROW|NLB|Layer 4 TCP/UDP/TLS; static IP per AZ, optional EIP|Static IP / low-level protocols
+ROW|GWLB|Geneve encapsulation on port 6081; transparent appliance fleet|Third-party firewall
+ROW|ASG|Min, desired, max capacity; launch template; replaces unhealthy instances|Elastic capacity
+ROW|Target tracking|Maintain metric target such as CPU or requests per target|Automatic demand scaling
+ROW|Step / scheduled / predictive|Threshold steps / known time / forecast patterns|Scaling behavior
+ROW|Health checks|ELB target health; enable ELB health checks in ASG to replace unhealthy targets|Self healing
+ROW|Cross-zone / stickiness|Distribute across AZs / session affinity where supported|Traffic balancing
+ROW|Connection draining|Deregistration delay allows in-flight requests to complete|Graceful scale-in
+TRAP|ALB cannot give you a stable public IP; use NLB or Global Accelerator if needed. ASG is not a load balancer. Externalize session state when possible.
+TRAP|ALB is ideal for HTTP path routing; NLB for TCP/UDP. Target tracking needs an appropriate utilization metric. Multi-AZ protects against AZ loss, not Region loss.
+Q|Send /images and /api to different target groups.|NLB|ALB|NAT gateway|GWLB|1|ALB supports layer 7 path routing.
+Q|TCP workload needs fixed IPs per AZ.|ALB|CloudFront|NLB|Route 53 weighted|2|NLB supports static zonal IPs.
+Q|Keep average CPU near 50% automatically.|Scheduled scaling|Target tracking|Manual scaling|Route 53|1|Target tracking adjusts capacity to maintain a target metric.
+#s3|Amazon S3|Storage|Object storage: choose durability, access patterns and retrieval requirements.|https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html
+FLOW|Client>Presigned URL / policy>S3 bucket>Lifecycle / replication>Archive or destination
+ROW|Standard|Frequent access, multi-AZ|Active objects
+ROW|Standard-IA / One Zone-IA|Infrequent access with retrieval cost; One Zone not AZ resilient|Cold / recreatable
+ROW|Intelligent-Tiering|Automatic tiering; monitoring charge for eligible objects|Unknown access
+ROW|Glacier Instant / Flexible / Deep Archive|Immediate / minutes-hours / hours; different minimum durations|Archive by retrieval need
+ROW|Versioning / Object Lock|Recover old versions / WORM retention; governance vs compliance mode|Delete protection / immutability
+ROW|SSE-S3 / SSE-KMS|S3-managed encryption / KMS key control and audit|Encryption requirements
+ROW|Policies / presigned URLs|Bucket and IAM permissions / temporary signed access|Private sharing
+ROW|Replication|SRR or CRR; versioning on both buckets; existing objects via Batch Replication|Regional copy
+ROW|Lifecycle|Transition or expire current/noncurrent versions; consider minimum durations|Cost control
+ROW|Multipart / Transfer Acceleration|Parallel parts / edge-assisted long-distance uploads|Large global files
+ROW|Events / consistency|Strong read-after-write; notifications can duplicate or arrive out of order|Event-driven workflow
+TRAP|S3 is not block storage. Storage classes have different minimum duration and retrieval charges. Cross-Region replication is asynchronous and not automatic for old objects.
+TRAP|S3 website endpoints do not support HTTPS directly; use CloudFront. Use REST origin + OAC for private buckets, not website endpoints. CORS is not authorization.
+Q|Unpredictable object access; optimize tiers automatically.|Standard-IA|Intelligent-Tiering|Deep Archive|EBS|1|Intelligent-Tiering adjusts access tiers automatically for eligible objects.
+Q|Globally distributed users upload large files to one S3 Region.|EFS|Transfer Acceleration|S3 website|NACL|1|Transfer Acceleration uses edge locations for long-distance transfers.
+Q|Regulatory WORM retention that even root cannot shorten.|Versioning only|Object Lock governance|Object Lock compliance|Lifecycle expiration|2|Compliance mode prevents shortening or deleting protected versions during retention.
+#storage|EBS, EFS & FSx|Storage|Block, shared file, object: select protocol before performance.|https://docs.aws.amazon.com/whitepapers/latest/aws-overview/storage-services.html
+FLOW|EC2 workload>Block: EBS / File: EFS / SMB: FSx>Snapshots or AWS Backup
+ROW|EBS|Persistent block device; one AZ; snapshots regional|Boot / database volumes
+ROW|gp3 / io2|General SSD independent IOPS/throughput / high-performance provisioned IOPS|General / demanding DB
+ROW|st1 / sc1|Throughput HDD / cold HDD; not boot volumes|Sequential large data
+ROW|EBS snapshots|Incremental backups; restore to another AZ; copy across Regions|Recovery
+ROW|EFS|Managed NFS, Linux shared access, Regional or One Zone|Multi-instance shared file
+ROW|FSx Windows|Managed SMB, Active Directory integration|Windows shares
+ROW|FSx Lustre|High-performance parallel file system, S3 integration|HPC / ML
+ROW|FSx ONTAP / OpenZFS|Enterprise multiprotocol / ZFS-compatible storage|Existing NAS workloads
+ROW|Storage Gateway|Hybrid file, volume or tape gateway|On-prem integration
+TRAP|EBS volumes are AZ-scoped. Multi-Attach has restricted volume and instance requirements and needs cluster-aware applications. EFS is not native SMB.
+TRAP|Snapshots are not synchronous HA. Instance store is ephemeral; EBS persists independently of running state, subject to delete-on-termination settings.
+Q|Linux instances across AZs share files concurrently.|EBS gp3|EFS Regional|Instance store|S3 Glacier|1|EFS provides shared NFS across AZs.
+Q|Windows applications require SMB and Active Directory.|EFS|FSx for Windows File Server|EBS snapshot|SQS|1|FSx Windows supports SMB and AD integration.
+Q|HPC needs a parallel filesystem integrated with S3.|EBS sc1|FSx Lustre|EFS One Zone|RDS|1|Lustre provides high-throughput parallel file access.
+#db|AWS databases|Databases|Choose the data model and access pattern before the engine.|https://docs.aws.amazon.com/whitepapers/latest/aws-overview/database.html
+FLOW|Application>Cache: ElastiCache>Database writer>Standby / read replicas
+ROW|RDS Multi-AZ|Classic DB instance deployment: synchronous standby for HA, not reads|Failover
+ROW|RDS read replica|Asynchronous replication for read scaling; can promote|Read-heavy
+ROW|RDS Multi-AZ DB cluster|Writer plus two readable standby instances across AZs|HA + read capacity
+ROW|Aurora|MySQL/PostgreSQL compatible; six storage copies across three AZs; reader endpoint|Managed relational scale
+ROW|Aurora Global Database|Cross-Region replication for regional reads and DR|Global relational
+ROW|DynamoDB|Key-value/document; partition and sort keys; on-demand or provisioned|Predictable low latency
+ROW|DynamoDB DAX / global tables|Read cache for eventually consistent reads / multi-Region replication|Read acceleration / global
+ROW|ElastiCache|Valkey/Redis OSS or Memcached; in-memory cache|Reduce DB load
+ROW|RDS Proxy|Pools connections; improves connection management|Lambda connection storms
+ROW|Redshift / Neptune / DocumentDB|Warehouse / graph / MongoDB-compatible documents|Specialized data model
+ROW|Backups / PITR|Recover past state, not automatic workload HA|Accidental deletion
+TRAP|Classic RDS Multi-AZ standby does not serve read traffic; Multi-AZ DB clusters differ. Read replicas are not a substitute for synchronous HA.
+TRAP|DynamoDB GSIs use eventual consistency; strongly consistent reads are supported on base tables and LSIs where applicable. A cache is not a durable system of record by default.
+Q|Classic RDS database requires automatic AZ failover.|Read replica only|Multi-AZ deployment|DAX|Redshift|1|Classic Multi-AZ uses synchronous standby and automatic failover.
+Q|Thousands of Lambda invocations exhaust RDS connections.|RDS Proxy|Global Accelerator|S3|DAX|0|RDS Proxy pools and manages database connections.
+Q|Low-latency key-value access at unpredictable scale.|RDS Oracle|Redshift|DynamoDB on-demand|Neptune|2|DynamoDB on-demand fits variable key-value workloads.
+#messaging|Messaging & streaming|Integration|Queue work, broadcast events, or retain streams for replay.|https://docs.aws.amazon.com/whitepapers/latest/aws-overview/application-integration.html
+FLOW|Producer>SNS topic>SQS queue A / SQS queue B>Independent consumers
+ROW|SQS Standard|At-least-once delivery; best-effort order; high throughput|Decouple workers
+ROW|SQS FIFO|Ordering within message group; deduplication window; idempotent consumer still needed|Ordered processing
+ROW|Visibility timeout|Hides received message until deletion or timeout|Prevent concurrent processing
+ROW|Long polling / DLQ|Wait up to 20 seconds / isolate repeatedly failed messages|Efficiency / poison messages
+ROW|SNS|Push pub/sub; subscriptions and filters; SNS-to-SQS fan-out|Broadcast events
+ROW|Kinesis Data Streams|Partition-key ordering within shard; retention and replay; multiple consumers|Streaming analytics
+ROW|Data Firehose|Managed delivery to supported destinations; buffering and optional transformation|Near-real-time delivery
+ROW|EventBridge|Event bus, rules, SaaS and AWS event routing|Event pattern routing
+ROW|Amazon MQ|Managed ActiveMQ or RabbitMQ for existing protocols|Legacy broker migration
+TRAP|SQS is pull-based; SNS is push-based. FIFO ordering is per message group, not globally across all groups. Visibility timeout is not retention period.
+TRAP|Firehose is a delivery pipeline, not a replayable stream consumer API. Scale queue consumers using backlog per instance when appropriate.
+Q|One event must reach three independent worker groups reliably.|One shared SQS queue|SNS fan-out to three SQS queues|ALB|NAT|1|Each SQS subscription gets its own event copy.
+Q|Reprocess a retained ordered stream with multiple applications.|SNS|SQS Standard|Kinesis Data Streams|Amazon MQ only|2|Kinesis retains records for independent consumers and replay.
+Q|Worker dies before deleting a received message.|Message always lost|Returns visible after timeout|SNS deletes it|Queue becomes FIFO|1|SQS makes an undeleted message available again after its visibility timeout.
+#serverless|Serverless & containers|Compute|Choose event-driven functions or containerized long-running services.|https://docs.aws.amazon.com/whitepapers/latest/aws-overview/compute-services.html
+FLOW|Client>API Gateway>Lambda>DynamoDB / SQS
+ROW|Lambda|Event-driven functions; maximum invocation 15 minutes|Short event processing
+ROW|Concurrency|Reserved limits/reserves capacity; provisioned pre-initializes environments|Throttle / cold start
+ROW|API Gateway|Managed REST/HTTP/WebSocket APIs; auth and throttling|Public API frontend
+ROW|Step Functions|State machines, retries, branching and orchestration|Multi-step workflow
+ROW|ECS / EKS|AWS-native container orchestration / managed Kubernetes|Container workloads
+ROW|Fargate|Managed compute for ECS tasks or supported EKS pods|No server management
+ROW|ECR|Container image registry|Image storage
+ROW|Lambda VPC|Private resource access through managed networking; NAT or endpoints for egress|Private DB access
+ROW|Event sources|SQS polling, streams, direct invokes; retry semantics vary|Asynchronous workloads
+TRAP|Lambda in a public subnet does not automatically get public IP access. Use NAT or appropriate endpoints. Avoid long-running jobs beyond 15 minutes.
+TRAP|Reserved concurrency is not provisioned concurrency. Fargate runs containers; ECR stores images. Step Functions coordinates workflows, not compute capacity.
+Q|A 40-minute container job should run without managing servers.|Lambda|ECS on Fargate|S3|API Gateway|1|Fargate supports long-running containers without managing EC2 hosts.
+Q|Coordinate branching and retries across several Lambda tasks.|CloudFront|Step Functions|EBS|Route 53|1|Step Functions manages workflow state and transitions.
+Q|Reduce cold starts for latency-sensitive Lambda.|Reserved concurrency only|Provisioned concurrency|SQS retention|NAT gateway|1|Provisioned concurrency initializes execution environments in advance.
+#edge|CloudFront & Global Accelerator|Networking|Cache HTTP content or accelerate global network connections.|https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/Introduction.html
+FLOW|Global users>Edge: CloudFront or Global Accelerator>Regional origin / endpoint
+ROW|CloudFront|CDN; edge caches HTTP responses; custom/S3 origins|Cache / global website
+ROW|Origin Access Control|Signed requests to supported S3 REST origin; private bucket|Prevent direct origin access
+ROW|Signed URLs / cookies|Restrict viewer access to private content|Paid content
+ROW|Cache policy|Cache key and TTL; choose query strings, headers and cookies carefully|Cache hit ratio
+ROW|Origin failover|CloudFront origin groups; eligible read methods and configured status codes|Read availability
+ROW|Global Accelerator|Static anycast IPs; AWS backbone; TCP/UDP endpoints; no content caching|Fixed IP / network acceleration
+ROW|S3 Transfer Acceleration|Edge-assisted transfers to one S3 bucket|Large long-distance upload
+ROW|Route 53|DNS selection, not proxying or acceleration|DNS routing
+TRAP|CloudFront is not only for static content. Global Accelerator does not cache. OAC cannot protect an S3 static website endpoint as an S3 origin.
+TRAP|Origin failover is not general write failover. Use CloudFront signed URLs/cookies for viewer access and OAC for origin access; these solve different problems.
+Q|Global TCP application requires two stable public IPs.|CloudFront|Global Accelerator|Route 53 latency only|S3 Transfer Acceleration|1|Global Accelerator provides static anycast addresses and network acceleration.
+Q|Private S3 objects should only be fetched through CloudFront.|OAC plus bucket policy|Public bucket|NAT|NACL|0|OAC signs origin requests and the bucket policy restricts access.
+Q|Cache HTTP images close to global readers.|Global Accelerator|CloudFront|Transit Gateway|SQS|1|CloudFront caches eligible HTTP responses at edge locations.
+#iam|IAM & encryption|Security|Grant minimum permissions and separate encryption from authorization.|https://docs.aws.amazon.com/IAM/latest/UserGuide/introduction.html
+FLOW|Principal>Assume IAM role / STS>Policy evaluation>AWS resource + KMS key
+ROW|IAM role / STS|Temporary credentials; trust policy defines who may assume|Workload access
+ROW|Identity / resource policy|Permissions attached to principal / resource|Authorization
+ROW|Explicit deny|Overrides applicable allows|Deny wins
+ROW|Permissions boundary / SCP|Maximum permissions; neither grants access|Guardrails
+ROW|Cross-account|Role trust + caller permission or appropriate resource policy; KMS permissions if needed|Account sharing
+ROW|KMS|Managed keys, key policies, grants; envelope encryption|Audit / key control
+ROW|SSE / TLS|Protect data at rest / in transit|Encryption
+ROW|Secrets Manager|Store secrets; managed rotation for supported integrations or custom rotation|Database credentials
+ROW|SSM Parameter Store|Configuration and SecureString parameters|Configuration secrets
+ROW|Identity Center / Cognito|Workforce SSO / application users|Federation / user identity
+TRAP|SCPs do not grant permissions. IAM roles do not need long-term access keys. KMS key policies matter even when IAM allows an action.
+TRAP|Encryption is not access control. Secrets Manager rotation requires configuration. A permissions boundary is a maximum, not an independent grant; resource-based policies have evaluation nuances.
+Q|EC2 must read S3 without storing credentials.|IAM role instance profile|Root keys|Public bucket|Hardcoded access key|0|An instance role supplies temporary credentials.
+Q|Prevent member accounts from using unapproved Regions.|SCP with appropriate conditions|IAM user password|KMS alias|Security group|0|SCPs define maximum permitted actions for member accounts.
+Q|Rotate database passwords automatically using supported integration.|Secrets Manager|EBS|CloudFront|Route 53|0|Secrets Manager supports configured secret rotation.
+#security|Security & monitoring|Security|Separate prevention, detection, evidence and operational metrics.|https://docs.aws.amazon.com/whitepapers/latest/aws-overview/security-identity-compliance.html
+FLOW|Workload>CloudWatch metrics / logs>Alarm>EventBridge / SNS>Response
+ROW|WAF|HTTP request filtering: SQL injection, XSS, rate-based rules|Web-layer protection
+ROW|Shield|Standard DDoS protection; Advanced adds enhanced protections and support|DDoS
+ROW|GuardDuty|Managed threat detection using supported signals|Suspicious behavior
+ROW|Inspector|Vulnerability management for supported EC2, ECR and Lambda resources|Vulnerabilities
+ROW|Macie|Discover sensitive data in S3|PII discovery
+ROW|Security Hub|Centralized security findings and posture management|Security aggregation
+ROW|CloudTrail|AWS API activity and identity audit; configure data events when needed|Who did what
+ROW|CloudWatch|Metrics, logs, alarms and dashboards|Performance / operational alerts
+ROW|Config|Resource configuration history and compliance rules|Configuration drift
+ROW|Systems Manager|Fleet management, patching, Session Manager|Operational access
+ROW|Network Firewall|Managed VPC network traffic filtering|Network inspection
+TRAP|CloudTrail records API activity; CloudWatch monitors operational signals. Config rules assess configuration, not application traffic. WAF is HTTP-focused, not a generic subnet firewall.
+TRAP|GuardDuty detects threats; Inspector identifies vulnerabilities; Macie discovers sensitive S3 data. Detection is not automatic prevention.
+Q|Find who deleted an AWS resource.|CloudWatch CPU metric|CloudTrail|Macie|WAF|1|CloudTrail records AWS API activity where supported and configured.
+Q|Find sensitive personal data in S3 buckets.|Inspector|Shield|Macie|Route 53|2|Macie discovers sensitive data in S3.
+Q|Flag resource configuration changes that violate rules.|AWS Config|SQS|Global Accelerator|EBS|0|Config records resource configurations and evaluates compliance rules.
+#dr|Disaster recovery & migration|Architecture|RPO = tolerable data loss; RTO = tolerable recovery time.|https://docs.aws.amazon.com/whitepapers/latest/disaster-recovery-workloads-on-aws/disaster-recovery-options-in-the-cloud.html
+FLOW|Primary Region>Replication / backups>Recovery Region>Failover / restore
+ROW|Backup and restore|Restore data and rebuild infrastructure after outage|Lowest standby cost, longer RTO
+ROW|Pilot light|Core data and critical services available; start additional resources at recovery|Reduced RTO vs restore
+ROW|Warm standby|Scaled-down but functional environment; scale up during disaster|Faster recovery
+ROW|Multi-site active-active|Both sites serve workloads; complex data coordination|Lowest potential RTO
+ROW|Multi-AZ / Multi-Region|AZ failure protection / regional disaster resilience|Failure boundary
+ROW|AWS Backup|Centralized backup policies and cross-account/Region copies where supported|Backup governance
+ROW|Application Migration Service|Block-level replication for server lift-and-shift|Rehost
+ROW|DMS|Database migration with ongoing CDC where supported|Low downtime database migration
+ROW|DataSync / Snow Family|Online file/object transfer / eligible offline transfer devices|Data movement
+ROW|Elastic Disaster Recovery|Continuous block-level replication and recovery orchestration|Server DR
+TRAP|Replication can replicate corruption; backups preserve recovery points. RPO and RTO are business objectives, not automatic guarantees of a named service.
+TRAP|Multi-AZ is not multi-Region. Warm standby is already functional; pilot light requires starting additional components. Test failover and failback.
+Q|Fully functioning small standby environment must scale up on failure.|Backup and restore|Pilot light|Warm standby|Cold storage only|2|Warm standby keeps a scaled-down working environment running.
+Q|Move a database with ongoing changes and minimal downtime.|DMS with CDC|CloudFront|EFS|WAF|0|DMS can migrate data and replicate supported ongoing changes.
+Q|Maximum tolerable loss of 15 minutes of data.|RTO|RPO|TTL|IOPS|1|RPO measures tolerable data loss in time.
+#analytics|Analytics & cost optimization|Architecture|Select the simplest managed service that satisfies data and cost requirements.|https://docs.aws.amazon.com/whitepapers/latest/aws-overview/analytics.html
+FLOW|Data sources>Firehose / DataSync>S3 data lake>Glue catalog>Athena / Redshift
+ROW|Athena|Serverless SQL on S3; scanned data drives on-demand query cost|Ad hoc queries
+ROW|Glue|Data catalog and managed ETL|Discover / transform data
+ROW|Redshift|Managed analytical warehouse; provisioned or serverless|OLAP at scale
+ROW|EMR|Managed big-data frameworks such as Spark|Distributed processing
+ROW|OpenSearch|Search and log analytics|Full-text search
+ROW|QuickSight / Quick Suite BI|Managed visualization and dashboards|BI reporting
+ROW|Cost Explorer / Budgets|Analyze spend trends / alerts and optional actions|Cost visibility / thresholds
+ROW|Compute Optimizer|Rightsizing recommendations|Underutilized resources
+ROW|Savings Plans / RI / Spot|Commitment discounts / reserved pricing / interruptible capacity|Compute cost
+ROW|Data transfer / storage|Avoid unnecessary cross-AZ or internet transfer; lifecycle data; optimize scans|Reduce recurring spend
+TRAP|Athena is not a transactional database. Partition and compress columnar data to reduce scanned bytes. Budgets alerts do not automatically stop all spending.
+TRAP|Do not optimize cost at the expense of stated availability or security requirements. Reserved pricing and capacity reservation are separate decisions.
+Q|Run occasional SQL queries over logs in S3 without servers.|Athena|RDS Multi-AZ|ECS|NLB|0|Athena queries S3 directly without managing infrastructure.
+Q|Find underutilized EC2 instances and size recommendations.|Route 53|Compute Optimizer|Macie|SNS|1|Compute Optimizer uses utilization to recommend resource configurations.
+Q|Petabyte-scale SQL analytical warehouse.|DynamoDB|Redshift|SQS|EFS|1|Redshift is designed for analytical warehouse workloads.
